@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shakespearean Hallucination Engine</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/ort.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/ort.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap');
 
@@ -359,18 +359,11 @@ async function loadModel() {
     status.textContent = 'Summoning the model from github...';
     status.className = 'status-bar';
 
-    ort.env.wasm.wasmPaths = 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/';
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
 
     status.textContent = 'Fetching model weights (this may take a moment)...';
-    const [modelBuffer, dataBuffer] = await Promise.all([
-      fetch(MODEL_BASE + 'shakespeare.onnx').then(r => r.arrayBuffer()),
-      fetch(MODEL_BASE + 'shakespeare.onnx.data').then(r => r.arrayBuffer()),
-    ]);
-
-    session = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: ['wasm'],
-      externalData: [{ path: 'shakespeare.onnx.data', data: new Uint8Array(dataBuffer) }]
-    });
+    const modelBuffer = await fetch(MODEL_BASE + 'shakespeare_v2_single.onnx').then(r => r.arrayBuffer());
+    session = await ort.InferenceSession.create(modelBuffer, { executionProviders: ['wasm'] });
 
     status.textContent = 'The Engine awaketh — begin thy prose below';
     status.className = 'status-bar ready';
