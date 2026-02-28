@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shakespearean Hallucination Engine</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.16.3/ort.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/ort.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap');
 
@@ -359,7 +359,7 @@ async function loadModel() {
     status.textContent = 'Summoning the model from github...';
     status.className = 'status-bar';
 
-    ort.env.wasm.wasmPaths = 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.16.3/';
+    ort.env.wasm.wasmPaths = 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/';
 
     status.textContent = 'Fetching model weights (this may take a moment)...';
     const [modelBuffer, dataBuffer] = await Promise.all([
