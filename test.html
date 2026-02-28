@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ort diagnostic</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/ort.min.js"></script>
+<style>
+  body { font-family: monospace; background: #111; color: #0f0; padding: 2rem; }
+  .fail { color: #f55; }
+  .pass { color: #0f0; }
+  .info { color: #aaa; }
+  pre { margin: 0.3rem 0 0.8rem; padding: 0.5rem; background: #1a1a1a; border-left: 3px solid #333; white-space: pre-wrap; word-break: break-all; }
+  h2 { color: #ff0; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #333; padding-bottom: 0.3rem; }
+  button { font-family: monospace; background: #222; color: #0f0; border: 1px solid #0f0; padding: 0.4rem 1rem; cursor: pointer; margin: 0.3rem; }
+  button:hover { background: #0f0; color: #111; }
+</style>
+</head>
+<body>
+<h1>🔬 ORT Diagnostic</h1>
+<p class="info">open console too, this logs everything</p>
+
+<h2>Model URL</h2>
+<input id="modelUrl" style="width:100%;font-family:monospace;background:#1a1a1a;color:#0f0;border:1px solid #333;padding:0.4rem;" 
+  value="https://raw.githubusercontent.com/CazyUndee/tiny_shakespeare/refs/heads/main/shakespeare_final_single.onnx">
+<br><br>
+<button onclick="runAll()">▶ Run All Tests</button>
+
+<div id="out"></div>
+
+<script>
+const SHAKESPEARE_CHARS = "\n !$&',-.3:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const stoi = {};
+const itos = {};
+[...SHAKESPEARE_CHARS].forEach((c, i) => { stoi[c] = i; itos[i] = c; });
+
+let session = null;
+const out = document.getElementById('out');
+
+function log(msg, cls='info') {
+  const p = document.createElement('p');
+  p.className = cls;
+  p.textContent = msg;
+  out.appendChild(p);
+  console.log(msg);
+}
+function pre(msg) {
+  const el = document.createElement('pre');
+  el.textContent = typeof msg === 'object' ? JSON.stringify(msg, null, 2) : String(msg);
+  out.appendChild(el);
+  console.log(msg);
+}
+function head(msg) {
+  const el = document.createElement('h2');
+  el.textContent = msg;
+  out.appendChild(el);
+}
+
+function errStr(e) {
+  if (!e) return 'undefined/null error';
+  if (typeof e === 'number') return `raw error code: ${e}`;
+  if (typeof e === 'string') return e;
+  return e.message || JSON.stringify(e) || String(e);
+}
+
+async function runAll() {
+  out.innerHTML = '';
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
+
+  // ── TEST 1: fetch model ──
+  head('1. Fetch Model');
+  let modelBuffer;
+  try {
+    log('fetching...');
+    const r = await fetch(document.getElementById('modelUrl').value);
+    log(`status: ${r.status} ${r.statusText}`, r.ok ? 'pass' : 'fail');
+    if (!r.ok) { log('❌ fetch failed, stopping', 'fail'); return; }
+    modelBuffer = await r.arrayBuffer();
+    log(`✅ got ${(modelBuffer.byteLength / 1024).toFixed(1)} KB`, 'pass');
+  } catch(e) {
+    log('❌ fetch threw: ' + errStr(e), 'fail'); return;
+  }
+
+  // ── TEST 2: create session ──
+  head('2. Create Session');
+  try {
+    session = await ort.InferenceSession.create(modelBuffer, { executionProviders: ['wasm'] });
+    log('✅ session created', 'pass');
+    log('input names: ' + session.inputNames.join(', '));
+    log('output names: ' + session.outputNames.join(', '));
+  } catch(e) {
+    log('❌ session create threw: ' + errStr(e), 'fail'); return;
+  }
+
+  // ── TEST 3: input dtype ──
+  head('3. Input Dtype (int32 vs int64)');
+  const dummy4 = [0, 1, 2, 3];
+
+  for (const [dtype, arr] of [['int32', Int32Array.from(dummy4)], ['int64', BigInt64Array.from(dummy4.map(BigInt))]]) {
+    try {
+      const t = new ort.Tensor(dtype, arr, [1, 4]);
+      const r = await session.run({ input: t });
+      log(`✅ ${dtype} works`, 'pass');
+    } catch(e) {
+      log(`❌ ${dtype} failed: ${errStr(e)}`, 'fail');
+    }
+  }
+
+  // ── TEST 4: various sequence lengths ──
+  head('4. Sequence Lengths (int32)');
+  for (const len of [1, 2, 4, 8, 16, 32, 64, 128, 256]) {
+    try {
+      const ctx = Array.from({length: len}, (_, i) => i % 65);
+      const t = new ort.Tensor('int32', Int32Array.from(ctx), [1, len]);
+      const r = await session.run({ input: t });
+      const logits = r.output.data;
+      log(`✅ len=${len} → output shape ok, logits.length=${logits.length}`, 'pass');
+    } catch(e) {
+      log(`❌ len=${len} failed: ${errStr(e)}`, 'fail');
+    }
+  }
+
+  // ── TEST 5: output shape sanity ──
+  head('5. Output Shape Check');
+  try {
+    const ctx = [0, 1, 2, 3, 4];
+    const t = new ort.Tensor('int32', Int32Array.from(ctx), [1, ctx.length]);
+    const r = await session.run({ input: t });
+    const logits = r.output.data;
+    const VOCAB = 65;
+    log(`logits.length = ${logits.length}`);
+    log(`expected = seq_len(${ctx.length}) * vocab(${VOCAB}) = ${ctx.length * VOCAB}`);
+    log(logits.length === ctx.length * VOCAB ? '✅ shape matches [1, seq, 65]' : '❌ shape mismatch!', logits.length === ctx.length * VOCAB ? 'pass' : 'fail');
+    log('first 5 logit values: ' + Array.from(logits.slice(0, 5)).map(x => x.toFixed(4)).join(', '));
+  } catch(e) {
+    log('❌ output shape test failed: ' + errStr(e), 'fail');
+  }
+
+  // ── TEST 6: vocab coverage ──
+  head('6. Vocab Coverage');
+  const testStr = 'To be or not to be';
+  const encoded = [...testStr].map(c => stoi[c] !== undefined ? stoi[c] : null);
+  const unknown = [...testStr].filter(c => stoi[c] === undefined);
+  log(`test string: "${testStr}"`);
+  log(`encoded: [${encoded.join(', ')}]`);
+  if (unknown.length) {
+    log(`❌ unknown chars (will be lost): ${JSON.stringify(unknown)}`, 'fail');
+  } else {
+    log('✅ all chars in vocab', 'pass');
+  }
+
+  // ── TEST 7: single generation step ──
+  head('7. One Generation Step');
+  try {
+    const ctx = [...'To be or not'].map(c => stoi[c] ?? 0);
+    const t = new ort.Tensor('int32', Int32Array.from(ctx), [1, ctx.length]);
+    const r = await session.run({ input: t });
+    const logits = Array.from(r.output.data.slice((ctx.length - 1) * 65, ctx.length * 65));
+    const maxIdx = logits.indexOf(Math.max(...logits));
+    log(`✅ next token (greedy): ${maxIdx} = "${itos[maxIdx]}"`, 'pass');
+  } catch(e) {
+    log('❌ generation step failed: ' + errStr(e), 'fail');
+  }
+
+  log('', 'info');
+  log('━━━ all tests done ━━━', 'info');
+}
+</script>
+</body>
+</html>

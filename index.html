@@ -174,11 +174,6 @@
     font-style: italic;
   }
 
-  .generated-text {
-    color: var(--red);
-    font-style: italic;
-  }
-
   .controls {
     display: flex;
     align-items: center;
@@ -264,21 +259,6 @@
     opacity: 0.7;
   }
 
-  .cursor-blink {
-    display: inline-block;
-    width: 2px;
-    height: 1.1em;
-    background: var(--red);
-    vertical-align: text-bottom;
-    animation: blink 1s step-end infinite;
-    margin-left: 1px;
-  }
-
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
-  }
-
   @media (max-width: 600px) {
     .page { padding: 2.5rem 1.5rem 2rem; }
     h1 { font-size: 1.5rem; }
@@ -327,7 +307,7 @@
   </div>
 
   <p class="footer-note">
-    1.2M parameters · trained on Tiny Shakespeare · beats karpathy's nanoGPT · runs in browser via ONNX
+    1.2M parameters · trained on Tiny Shakespeare · runs in browser via ONNX
   </p>
 </div>
 
@@ -362,11 +342,17 @@ async function loadModel() {
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
 
     status.textContent = 'Fetching model weights (this may take a moment)...';
-    const modelBuffer = await fetch(MODEL_BASE + 'shakespeare_final_single.onnx').then(r => r.arrayBuffer());
+    const modelBuffer = await fetch(MODEL_BASE + 'shakespeare_final_single.onnx').then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      return r.arrayBuffer();
+    });
+
     session = await ort.InferenceSession.create(modelBuffer, { executionProviders: ['wasm'] });
     console.log('inputs:', session.inputNames);
     console.log('outputs:', session.outputNames);
 
+    // figure out what dtype the model actually wants
+    // we'll try int64 first (pytorch default for torch.long)
     status.textContent = 'The Engine awaketh — begin thy prose below';
     status.className = 'status-bar ready';
     editor.disabled = false;
@@ -379,7 +365,7 @@ async function loadModel() {
 }
 
 function encode(text) {
-  return [...text].map(c => stoi[c] ?? 0);
+  return [...text].map(c => stoi[c] !== undefined ? stoi[c] : 0);
 }
 
 function softmax(logits, temperature) {
@@ -399,6 +385,17 @@ function sample(probs) {
   return probs.length - 1;
 }
 
+async function runModel(ctx) {
+  try {
+    const inputTensor = new ort.Tensor('int32', Int32Array.from(ctx), [1, ctx.length]);
+    return await session.run({ input: inputTensor });
+  } catch (e) {
+    // ort errors are sometimes not real Error objects, stringify the whole thing
+    const msg = e?.message || JSON.stringify(e) || String(e);
+    throw new Error('session.run failed: ' + msg);
+  }
+}
+
 async function generate() {
   if (!session || isGenerating) return;
   isGenerating = true;
@@ -416,6 +413,7 @@ async function generate() {
   status.className = 'status-bar';
 
   let tokens = encode(currentText.slice(-BLOCK_SIZE));
+  // need at least 1 token
   if (tokens.length === 0) tokens = [0];
 
   let generated = '';
@@ -423,17 +421,32 @@ async function generate() {
   try {
     for (let i = 0; i < maxNew; i++) {
       const ctx = tokens.slice(-BLOCK_SIZE);
-      const inputTensor = new ort.Tensor('int32', Int32Array.from(ctx), [1, ctx.length]);
-      const results = await session.run({ input: inputTensor });
-      const logitsAll = results.output.data;
-      const lastLogits = Array.from(logitsAll.slice((ctx.length - 1) * VOCAB_SIZE, ctx.length * VOCAB_SIZE));
+
+      let results;
+      try {
+        results = await runModel(ctx);
+      } catch (e) {
+        throw new Error('session.run failed: ' + e.message);
+      }
+
+      const logitsAll = results.output.data; // Float32Array
+      const seqLen = ctx.length;
+      // logits shape is [1, seq_len, vocab_size]
+      // last token logits start at (seqLen - 1) * VOCAB_SIZE
+      const offset = (seqLen - 1) * VOCAB_SIZE;
+      const lastLogits = Array.from(logitsAll.slice(offset, offset + VOCAB_SIZE));
+
+      if (lastLogits.length !== VOCAB_SIZE) {
+        throw new Error(`Expected ${VOCAB_SIZE} logits, got ${lastLogits.length}. Total logits: ${logitsAll.length}, offset: ${offset}`);
+      }
+
       const probs = softmax(lastLogits, temperature);
       const nextToken = sample(probs);
       tokens.push(nextToken);
       const nextChar = itos[nextToken] ?? '';
       generated += nextChar;
 
-      // Update display every 5 chars
+      // update display every 5 chars
       if (i % 5 === 0) {
         editor.value = userText + generated;
         editor.scrollTop = editor.scrollHeight;
@@ -446,9 +459,10 @@ async function generate() {
     status.textContent = 'The Engine hath spoken — continue thy verse or generate anew';
     status.className = 'status-bar ready';
   } catch (e) {
-    status.textContent = 'Error during generation: ' + (e.message || JSON.stringify(e));
+    status.textContent = 'Error: ' + e.message;
     status.className = 'status-bar error';
     console.error('full error:', e);
+    console.error('stack:', e.stack);
   }
 
   isGenerating = false;
