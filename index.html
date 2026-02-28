@@ -361,9 +361,15 @@ async function loadModel() {
 
     ort.env.wasm.wasmPaths = 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.16.3/';
 
-    session = await ort.InferenceSession.create(MODEL_BASE + 'shakespeare.onnx', {
+    status.textContent = 'Fetching model weights (this may take a moment)...';
+    const [modelBuffer, dataBuffer] = await Promise.all([
+      fetch(MODEL_BASE + 'shakespeare.onnx').then(r => r.arrayBuffer()),
+      fetch(MODEL_BASE + 'shakespeare.onnx.data').then(r => r.arrayBuffer()),
+    ]);
+
+    session = await ort.InferenceSession.create(modelBuffer, {
       executionProviders: ['wasm'],
-      externalData: [{ path: 'shakespeare.onnx.data', data: MODEL_BASE + 'shakespeare.onnx.data' }]
+      externalData: [{ path: 'shakespeare.onnx.data', data: new Uint8Array(dataBuffer) }]
     });
 
     status.textContent = 'The Engine awaketh — begin thy prose below';
