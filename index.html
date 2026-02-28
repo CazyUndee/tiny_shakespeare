@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shakespearean Hallucination Engine</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.16.3/ort.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap');
+
+  :root {
+    --parchment: #f4e8c1;
+    --parchment-dark: #e8d59a;
+    --ink: #2c1810;
+    --ink-faded: #5c3d2e;
+    --ink-light: #8b6355;
+    --red: #8b1a1a;
+    --gold: #c8a84b;
+    --shadow: rgba(44, 24, 16, 0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #1a0f0a;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    font-family: 'IM Fell English', serif;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: 
+      radial-gradient(ellipse at 20% 20%, rgba(200, 168, 75, 0.05) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 80%, rgba(139, 26, 26, 0.05) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .page {
+    background: var(--parchment);
+    max-width: 780px;
+    width: 100%;
+    padding: 4rem 4rem 3rem;
+    position: relative;
+    box-shadow: 
+      0 0 0 1px var(--gold),
+      0 0 0 4px var(--parchment-dark),
+      0 0 0 5px var(--gold),
+      0 20px 60px rgba(0,0,0,0.8),
+      inset 0 0 80px rgba(44, 24, 16, 0.05);
+    animation: pageReveal 1.2s ease forwards;
+    opacity: 0;
+  }
+
+  @keyframes pageReveal {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .page::before {
+    content: '';
+    position: absolute;
+    inset: 12px;
+    border: 1px solid var(--gold);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .page::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: 
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    opacity: 0.5;
+  }
+
+  .ornament {
+    text-align: center;
+    color: var(--gold);
+    font-size: 1.4rem;
+    letter-spacing: 0.3em;
+    margin-bottom: 0.5rem;
+    opacity: 0.7;
+  }
+
+  h1 {
+    font-family: 'IM Fell English SC', serif;
+    text-align: center;
+    font-size: 2rem;
+    color: var(--ink);
+    line-height: 1.2;
+    margin-bottom: 0.3rem;
+    letter-spacing: 0.05em;
+  }
+
+  .subtitle {
+    text-align: center;
+    font-style: italic;
+    color: var(--ink-faded);
+    font-size: 0.9rem;
+    margin-bottom: 2rem;
+    letter-spacing: 0.05em;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1.5rem 0;
+    color: var(--gold);
+    opacity: 0.6;
+  }
+
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--gold);
+    opacity: 0.5;
+  }
+
+  .status-bar {
+    background: var(--ink);
+    color: var(--parchment);
+    padding: 0.6rem 1.2rem;
+    font-size: 0.8rem;
+    font-style: italic;
+    letter-spacing: 0.05em;
+    text-align: center;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--gold);
+    min-height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+  }
+
+  .status-bar.error { color: #ff9999; }
+  .status-bar.ready { color: #c8f0a0; }
+
+  .scroll-area {
+    position: relative;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 280px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--gold);
+    padding: 1rem 0;
+    font-family: 'IM Fell English', serif;
+    font-size: 1.05rem;
+    color: var(--ink);
+    line-height: 1.9;
+    resize: none;
+    outline: none;
+    letter-spacing: 0.02em;
+  }
+
+  textarea::placeholder {
+    color: var(--ink-light);
+    font-style: italic;
+  }
+
+  .generated-text {
+    color: var(--red);
+    font-style: italic;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1.5rem;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 140px;
+  }
+
+  .slider-label {
+    font-size: 0.75rem;
+    color: var(--ink-faded);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-style: italic;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--red);
+    cursor: pointer;
+  }
+
+  .btn-group {
+    display: flex;
+    gap: 0.7rem;
+  }
+
+  button {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 0.85rem;
+    padding: 0.6rem 1.4rem;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    transition: all 0.2s ease;
+    border: 1px solid;
+  }
+
+  .btn-generate {
+    background: var(--ink);
+    color: var(--parchment);
+    border-color: var(--ink);
+  }
+
+  .btn-generate:hover:not(:disabled) {
+    background: var(--red);
+    border-color: var(--red);
+  }
+
+  .btn-generate:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-clear {
+    background: transparent;
+    color: var(--ink-faded);
+    border-color: var(--ink-light);
+  }
+
+  .btn-clear:hover {
+    color: var(--ink);
+    border-color: var(--ink);
+  }
+
+  .footer-note {
+    text-align: center;
+    font-style: italic;
+    color: var(--ink-light);
+    font-size: 0.75rem;
+    margin-top: 2rem;
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+  }
+
+  .cursor-blink {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background: var(--red);
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+    margin-left: 1px;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  @media (max-width: 600px) {
+    .page { padding: 2.5rem 1.5rem 2rem; }
+    h1 { font-size: 1.5rem; }
+    .controls { flex-direction: column; }
+    .btn-group { width: 100%; justify-content: stretch; }
+    button { flex: 1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="ornament">❧ ✦ ❧</div>
+  <h1>Shakespearean Hallucination Engine</h1>
+  <p class="subtitle">A tiny language model trained upon the complete works — runs entirely in thy browser</p>
+
+  <div class="divider">✦</div>
+
+  <div class="status-bar" id="status">Loading the model from the ether, prithee wait...</div>
+
+  <div class="scroll-area">
+    <textarea id="editor" placeholder="Begin thy prose here, and the Engine shall complete it in the Bard's own tongue..." disabled></textarea>
+  </div>
+
+  <div class="controls">
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>Characters to Generate</span>
+        <span id="genLenVal">200</span>
+      </div>
+      <input type="range" id="genLen" min="50" max="500" value="200" step="50">
+    </div>
+
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>Temperature</span>
+        <span id="tempVal">0.8</span>
+      </div>
+      <input type="range" id="temp" min="0.1" max="2.0" value="0.8" step="0.1">
+    </div>
+
+    <div class="btn-group">
+      <button class="btn-clear" id="clearBtn">Clear</button>
+      <button class="btn-generate" id="genBtn" disabled>Generate</button>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    1.2M parameters · trained on Tiny Shakespeare · beats karpathy's nanoGPT · runs in browser via ONNX
+  </p>
+</div>
+
+<script>
+const MODEL_BASE = 'https://raw.githubusercontent.com/CazyUndee/tiny_shakespeare/main/';
+const SHAKESPEARE_CHARS = '\n !"$&\'(),-.3:;?ABCDEFGHIJKLMNOPQRSTUVWXYZ[]abcdefghijklmnopqrstuvwxyz';
+const stoi = {};
+const itos = {};
+[...SHAKESPEARE_CHARS].forEach((c, i) => { stoi[c] = i; itos[i] = c; });
+
+const status = document.getElementById('status');
+const editor = document.getElementById('editor');
+const genBtn = document.getElementById('genBtn');
+const clearBtn = document.getElementById('clearBtn');
+const genLen = document.getElementById('genLen');
+const genLenVal = document.getElementById('genLenVal');
+const temp = document.getElementById('temp');
+const tempVal = document.getElementById('tempVal');
+
+genLen.addEventListener('input', () => genLenVal.textContent = genLen.value);
+temp.addEventListener('input', () => tempVal.textContent = parseFloat(temp.value).toFixed(1));
+
+let session = null;
+let isGenerating = false;
+let userText = '';
+
+async function loadModel() {
+  try {
+    status.textContent = 'Summoning the model from github...';
+    status.className = 'status-bar';
+
+    ort.env.wasm.wasmPaths = 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.16.3/';
+
+    session = await ort.InferenceSession.create(MODEL_BASE + 'shakespeare.onnx', {
+      executionProviders: ['wasm'],
+      externalData: [{ path: 'shakespeare.onnx.data', data: MODEL_BASE + 'shakespeare.onnx.data' }]
+    });
+
+    status.textContent = 'The Engine awaketh — begin thy prose below';
+    status.className = 'status-bar ready';
+    editor.disabled = false;
+    genBtn.disabled = false;
+  } catch (e) {
+    status.textContent = 'Failed to load model: ' + e.message;
+    status.className = 'status-bar error';
+    console.error(e);
+  }
+}
+
+function encode(text) {
+  return [...text].map(c => stoi[c] ?? 0);
+}
+
+function softmax(logits, temperature) {
+  const scaled = logits.map(x => x / temperature);
+  const maxVal = Math.max(...scaled);
+  const exps = scaled.map(x => Math.exp(x - maxVal));
+  const sum = exps.reduce((a, b) => a + b, 0);
+  return exps.map(x => x / sum);
+}
+
+function sample(probs) {
+  let r = Math.random();
+  for (let i = 0; i < probs.length; i++) {
+    r -= probs[i];
+    if (r <= 0) return i;
+  }
+  return probs.length - 1;
+}
+
+async function generate() {
+  if (!session || isGenerating) return;
+  isGenerating = true;
+  genBtn.disabled = true;
+  editor.disabled = true;
+
+  const currentText = editor.value;
+  userText = currentText;
+  const maxNew = parseInt(genLen.value);
+  const temperature = parseFloat(temp.value);
+  const BLOCK_SIZE = 256;
+  const VOCAB_SIZE = 65;
+
+  status.textContent = 'The Engine doth hallucinate...';
+  status.className = 'status-bar';
+
+  let tokens = encode(currentText.slice(-BLOCK_SIZE));
+  if (tokens.length === 0) tokens = [0];
+
+  let generated = '';
+
+  try {
+    for (let i = 0; i < maxNew; i++) {
+      const ctx = tokens.slice(-BLOCK_SIZE);
+      const inputTensor = new ort.Tensor('int64', BigInt64Array.from(ctx.map(BigInt)), [1, ctx.length]);
+      const results = await session.run({ input: inputTensor });
+      const logitsAll = results.output.data;
+      const lastLogits = Array.from(logitsAll.slice((ctx.length - 1) * VOCAB_SIZE, ctx.length * VOCAB_SIZE));
+      const probs = softmax(lastLogits, temperature);
+      const nextToken = sample(probs);
+      tokens.push(nextToken);
+      const nextChar = itos[nextToken] ?? '';
+      generated += nextChar;
+
+      // Update display every 5 chars
+      if (i % 5 === 0) {
+        editor.value = userText + generated;
+        editor.scrollTop = editor.scrollHeight;
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+
+    editor.value = userText + generated;
+    editor.scrollTop = editor.scrollHeight;
+    status.textContent = 'The Engine hath spoken — continue thy verse or generate anew';
+    status.className = 'status-bar ready';
+  } catch (e) {
+    status.textContent = 'Error during generation: ' + e.message;
+    status.className = 'status-bar error';
+    console.error(e);
+  }
+
+  isGenerating = false;
+  genBtn.disabled = false;
+  editor.disabled = false;
+}
+
+clearBtn.addEventListener('click', () => {
+  if (!isGenerating) {
+    editor.value = '';
+    userText = '';
+  }
+});
+
+genBtn.addEventListener('click', generate);
+
+editor.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    generate();
+  }
+});
+
+loadModel();
+</script>
+</body>
+</html>
