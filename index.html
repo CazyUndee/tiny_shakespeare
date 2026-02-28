@@ -364,6 +364,8 @@ async function loadModel() {
     status.textContent = 'Fetching model weights (this may take a moment)...';
     const modelBuffer = await fetch(MODEL_BASE + 'shakespeare_final_single.onnx').then(r => r.arrayBuffer());
     session = await ort.InferenceSession.create(modelBuffer, { executionProviders: ['wasm'] });
+    console.log('inputs:', session.inputNames);
+    console.log('outputs:', session.outputNames);
 
     status.textContent = 'The Engine awaketh — begin thy prose below';
     status.className = 'status-bar ready';
@@ -444,9 +446,9 @@ async function generate() {
     status.textContent = 'The Engine hath spoken — continue thy verse or generate anew';
     status.className = 'status-bar ready';
   } catch (e) {
-    status.textContent = 'Error during generation: ' + e.message;
+    status.textContent = 'Error during generation: ' + (e.message || JSON.stringify(e));
     status.className = 'status-bar error';
-    console.error(e);
+    console.error('full error:', e);
   }
 
   isGenerating = false;
