@@ -423,7 +423,7 @@ async function generate() {
   try {
     for (let i = 0; i < maxNew; i++) {
       const ctx = tokens.slice(-BLOCK_SIZE);
-      const inputTensor = new ort.Tensor('int64', BigInt64Array.from(ctx.map(BigInt)), [1, ctx.length]);
+      const inputTensor = new ort.Tensor('int32', Int32Array.from(ctx), [1, ctx.length]);
       const results = await session.run({ input: inputTensor });
       const logitsAll = results.output.data;
       const lastLogits = Array.from(logitsAll.slice((ctx.length - 1) * VOCAB_SIZE, ctx.length * VOCAB_SIZE));
